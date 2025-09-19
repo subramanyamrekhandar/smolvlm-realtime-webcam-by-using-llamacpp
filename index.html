@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Llama Video</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f8fafc;
+      color: #111827;
+    }
+
+    header {
+      padding: 1rem 2rem;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 1.5rem;
+    }
+
+    header input {
+      border: 1px solid #d1d5db;
+      padding: 0.5rem;
+      border-radius: 6px;
+      width: 250px;
+    }
+
+    main {
+      display: flex;
+      gap: 1rem;
+      padding: 1rem;
+    }
+
+    .card {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      padding: 2rem;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 400px;
+    }
+
+    .card h2 {
+      margin: 0.5rem 0;
+      font-size: 1.25rem;
+    }
+
+    .button {
+      background-color: #111827;
+      color: white;
+      padding: 0.75rem 1.5rem;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 1rem;
+      margin-top: 1rem;
+    }
+
+    .button.stop {
+      background-color: #dc2626;
+    }
+
+    video {
+      max-width: 100%;
+      border-radius: 8px;
+      display: none; /* hidden until camera starts */
+    }
+
+    textarea {
+      width: 100%;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      padding: 0.5rem;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+      resize: vertical;
+    }
+
+    .sidebar {
+      flex: 0.4;
+    }
+
+    .sidebar h3 {
+      margin-top: 0;
+    }
+
+    #pastAnalyses {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  color: #374151;
+  max-height: 200px;   /* set fixed height */
+  overflow-y: auto;    /* enable vertical scroll */
+  padding-right: 6px;  /* small spacing for scrollbar */
+}
+
+#pastAnalyses::-webkit-scrollbar {
+  width: 6px;
+}
+
+#pastAnalyses::-webkit-scrollbar-thumb {
+  background: #9ca3af;
+  border-radius: 4px;
+}
+
+  </style>
+</head>
+<body>
+  <header>
+    <h1>DevProduct AI</h1>
+    <input id="baseURL" value="http://localhost:8080"/>
+  </header>
+
+  <main>
+    <!-- Left: Camera + Controls -->
+    <div class="card">
+      <video id="videoFeed" autoplay playsinline></video>
+      <canvas id="canvas" style="display:none;"></canvas>
+
+      <div id="readyText">
+        <h2>Ready to Start</h2>
+        <p>Click below to start your camera and begin AI analysis</p>
+      </div>
+
+      <button id="startButton" class="button">Start Camera</button>
+
+      <textarea id="instructionText">What do you see?</textarea>
+      <textarea id="responseText" readonly placeholder="Server response will appear here..."></textarea>
+    </div>
+
+    <!-- Right: Sidebar -->
+    <div class="card sidebar">
+      <h3>What DevAI</h3>
+      <p id="llamaStatus">Start your camera to begin AI analysis…</p>
+      <small>Powered by Devproduct Ai</small>
+      <hr />
+      <h4>Past Analyses</h4>
+      <div id="pastAnalyses"></div>
+    </div>
+  </main>
+
+  <script>
+    const video = document.getElementById('videoFeed');
+    const canvas = document.getElementById('canvas');
+    const baseURL = document.getElementById('baseURL');
+    const instructionText = document.getElementById('instructionText');
+    const responseText = document.getElementById('responseText');
+    const startButton = document.getElementById('startButton');
+    const llamaStatus = document.getElementById('llamaStatus');
+    const pastAnalyses = document.getElementById('pastAnalyses');
+
+    let stream;
+    let intervalId;
+    let isProcessing = false;
+
+    async function sendChatCompletionRequest(instruction, imageBase64URL) {
+      const response = await fetch(`${baseURL.value}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          max_tokens: 100,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: instruction },
+                { type: 'image_url', image_url: { url: imageBase64URL } }
+              ]
+            }
+          ]
+        })
+      });
+      if (!response.ok) {
+        const errorData = await response.text();
+        return `Server error: ${response.status} - ${errorData}`;
+      }
+      const data = await response.json();
+      return data.choices[0].message.content;
+    }
+
+    async function initCamera() {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        video.srcObject = stream;
+      } catch (err) {
+        alert("Error accessing camera: " + err.message);
+      }
+    }
+
+    function captureImage() {
+      if (!stream || !video.videoWidth) return null;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext('2d');
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', 0.8);
+    }
+
+    async function sendData() {
+      if (!isProcessing) return;
+      const instruction = instructionText.value;
+      const imageBase64URL = captureImage();
+      if (!imageBase64URL) return;
+      const response = await sendChatCompletionRequest(instruction, imageBase64URL);
+      responseText.value = response;
+      pastAnalyses.innerHTML += `<div>• ${response}</div>`;
+      llamaStatus.textContent = response;
+    }
+
+    function handleStart() {
+      if (!stream) {
+        initCamera();
+        return;
+      }
+      isProcessing = true;
+      startButton.textContent = "Stop";
+      startButton.classList.add("stop");
+      video.style.display = "block";
+      document.getElementById("readyText").style.display = "none";
+      sendData();
+      intervalId = setInterval(sendData, 1000);
+    }
+
+    function handleStop() {
+      isProcessing = false;
+      if (intervalId) clearInterval(intervalId);
+      startButton.textContent = "Start Camera";
+      startButton.classList.remove("stop");
+    }
+
+    startButton.addEventListener("click", () => {
+      if (isProcessing) handleStop();
+      else handleStart();
+    });
+  </script>
+</body>
+</html>
